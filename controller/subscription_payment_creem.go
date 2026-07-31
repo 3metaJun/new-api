@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -9,8 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/thanhpk/randstr"
 )
@@ -53,12 +52,17 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		common.ApiErrorT(c, "CreemProductId is not configured for this plan")
 		return
 	}
-	if setting.CreemWebhookSecret == "" && !setting.CreemTestMode {
+	config := currentCreemConfig()
+	if config.ApiKey == "" || config.WebhookSecret == "" {
 		common.ApiErrorT(c, "Creem webhook is not configured")
 		return
 	}
 
 	userId := c.GetInt("id")
+	if model.NormalizeResetPeriod(plan.QuotaResetPeriod) != model.SubscriptionResetNever || plan.MaxPurchasePerUser != 0 {
+		common.ApiErrorMsg(c, "Creem recurring plans must use quota_reset_period=never and max_purchase_per_user=0")
+		return
+	}
 	user, err := model.GetUserById(userId, false)
 	if err != nil {
 		common.ApiError(c, err)
@@ -84,42 +88,51 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	reference := "sub-creem-ref-" + randstr.String(6)
 	referenceId := "sub_ref_" + common.Sha1([]byte(reference+time.Now().String()+user.Username))
 
-	// create pending order first
-	order := &model.SubscriptionOrder{
-		UserId:          userId,
-		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		TradeNo:         referenceId,
-		PaymentMethod:   model.PaymentMethodCreem,
-		PaymentProvider: model.PaymentProviderCreem,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+	allowWalletOverflow := true
+	if plan.AllowWalletOverflow != nil {
+		allowWalletOverflow = *plan.AllowWalletOverflow
 	}
-	if err := order.Insert(); err != nil {
+
+	// Create the pending order with an immutable provider contract snapshot.
+	order := &model.SubscriptionOrder{
+		UserId:              userId,
+		PlanId:              plan.Id,
+		Money:               plan.PriceAmount,
+		TradeNo:             referenceId,
+		PaymentMethod:       model.PaymentMethodCreem,
+		PaymentProvider:     model.PaymentProviderCreem,
+		CreateTime:          time.Now().Unix(),
+		Status:              common.TopUpStatusPending,
+		ContractSnapshot:    true,
+		ProviderProductId:   plan.CreemProductId,
+		Currency:            plan.Currency,
+		PlanTitle:           plan.Title,
+		AmountTotal:         plan.TotalAmount,
+		AllowWalletOverflow: allowWalletOverflow,
+		UpgradeGroup:        plan.UpgradeGroup,
+		DowngradeGroup:      plan.DowngradeGroup,
+	}
+	if err := model.ReserveCreemSubscriptionCheckout(userId, order); err != nil {
+		if errors.Is(err, model.ErrCreemCheckoutAlreadyPending) {
+			common.ApiErrorMsg(c, "A Creem subscription checkout is already pending")
+			return
+		}
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
 
 	// Reuse Creem checkout generator by building a lightweight product reference.
-	currency := "USD"
-	switch operation_setting.GetGeneralSetting().QuotaDisplayType {
-	case operation_setting.QuotaDisplayTypeCNY:
-		currency = "CNY"
-	case operation_setting.QuotaDisplayTypeUSD:
-		currency = "USD"
-	default:
-		currency = "USD"
-	}
 	product := &CreemProduct{
 		ProductId: plan.CreemProductId,
 		Name:      plan.Title,
 		Price:     plan.PriceAmount,
-		Currency:  currency,
+		Currency:  plan.Currency,
 		Quota:     0,
 	}
 
-	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, product, user.Email, user.Username)
+	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, product, user.Email, user.Username, config)
 	if err != nil {
+		_ = model.ReleaseCreemSubscriptionCheckout(referenceId)
 		logger.LogError(c.Request.Context(), common.LogText("Creem failed to create subscription payment link trade_no=%s product_id=%s error=%q", referenceId, product.ProductId, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return

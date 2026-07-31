@@ -5841,6 +5841,7 @@
     "Start again": "やり直す",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "残高でサブスクリプションを購入しました。プラン：{{plan}}、支払額：{{amount}}、差し引かれたクォータ：{{quota}}",
     "Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "サブスクリプションを購入しました。プラン：{{plan}}、支払額：{{amount}}、支払方法：{{method}}",
+    "Subscription renewed, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "サブスクリプションを更新しました。プラン：{{plan}}、支払額：{{amount}}、支払方法：{{method}}",
     "Start collecting payments globally without registering a company. Built for indie developers, OPC sole proprietorships, and startups. Waffo Pancake acts as your Merchant of Record, taking on the compliance burden of global payment collection — consumption tax, invoicing, subscription management, refunds, and chargebacks. Solo developers can launch fast and stay focused on product instead of compliance. Onboard in minutes — one prompt to a full integration.": "法人を設立せずに世界中で決済を受け付けられます。個人開発者、OPC 個人事業主、スタートアップ向けに設計されています。Waffo Pancake は Merchant of Record として、消費税、請求書、サブスクリプション管理、返金、チャージバックなど、グローバル決済のコンプライアンス負担を引き受けます。個人開発者はコンプライアンスではなくプロダクトに集中しながら素早くローンチできます。数分でオンボーディングし、1 つのプロンプトから完全な統合まで進められます。",
     "Start for free with generous limits. No credit card required.": "豊富な無料枠で始められます。クレジットカードは不要です。",
     "Start SGLang with --enable-metrics to expose Prometheus metrics.": "Prometheus メトリクスを有効にするには、--enable-metrics を指定して SGLang を起動してください。",

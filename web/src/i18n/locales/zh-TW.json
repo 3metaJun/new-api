@@ -5841,6 +5841,7 @@
     "Start again": "重新開始",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "使用餘額購買訂閱成功，方案：{{plan}}，支付金額：{{amount}}，扣除額度：{{quota}}",
     "Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "訂閱購買成功，方案：{{plan}}，支付金額：{{amount}}，支付方式：{{method}}",
+    "Subscription renewed, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "訂閱續費成功，方案：{{plan}}，支付金額：{{amount}}，支付方式：{{method}}",
     "Start collecting payments globally without registering a company. Built for indie developers, OPC sole proprietorships, and startups. Waffo Pancake acts as your Merchant of Record, taking on the compliance burden of global payment collection — consumption tax, invoicing, subscription management, refunds, and chargebacks. Solo developers can launch fast and stay focused on product instead of compliance. Onboard in minutes — one prompt to a full integration.": "無需註冊公司即可開始全球收款。面向獨立開發者、OPC 個體經營者和初創團隊構建。Waffo Pancake 作為你的登記商戶（Merchant of Record），承擔全球收款相關的合規負擔，包括消費稅、開票、訂閱管理、退款和拒付。個人開發者可以快速上線，專注產品而不是合規事務。幾分鐘即可完成入駐，從一個提示詞到完整整合。",
     "Start for free with generous limits. No credit card required.": "免費開始使用，額度充足，無需連結信用卡。",
     "Start SGLang with --enable-metrics to expose Prometheus metrics.": "啟動 SGLang 時加入 --enable-metrics 以啟用 Prometheus 指標。",
