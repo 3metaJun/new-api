@@ -6327,6 +6327,7 @@
     "Subscription purchased successfully": "订阅购买成功",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "使用余额购买订阅成功，套餐: {{plan}}，支付金额: {{amount}}，扣除额度: {{quota}}",
     "Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "订阅购买成功，套餐: {{plan}}，支付金额: {{amount}}，支付方式: {{method}}",
+    "Subscription renewed, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "订阅续费成功，套餐: {{plan}}，支付金额: {{amount}}，支付方式: {{method}}",
     "Subscriptions": "订阅",
     "Subtract": "减少",
     "succeeded": "已成功",

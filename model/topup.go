@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -13,16 +14,20 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id                        int     `json:"id"`
+	UserId                    int     `json:"user_id" gorm:"index"`
+	Amount                    int64   `json:"amount"`
+	Money                     float64 `json:"money"`
+	TradeNo                   string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod             string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider           string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime                int64   `json:"create_time"`
+	CompleteTime              int64   `json:"complete_time"`
+	Status                    string  `json:"status"`
+	ContractSnapshot          bool    `json:"contract_snapshot"`
+	ExpectedProviderProductId string  `json:"expected_provider_product_id" gorm:"type:varchar(128);default:''"`
+	ExpectedAmountMinor       int64   `json:"expected_amount_minor" gorm:"type:bigint;not null;default:0"`
+	ExpectedCurrency          string  `json:"expected_currency" gorm:"type:varchar(8);default:''"`
 }
 
 const (
@@ -247,7 +252,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
+		err = lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
 			return errors.New("top-up order not found")
 		}
@@ -522,7 +527,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
 	return nil
 }
-func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
+func RechargeCreem(input CreemPaymentInput, referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -536,13 +541,29 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
+		done, event, err := beginCreemEventTx(tx, input)
+		if err != nil || done {
+			return err
+		}
+		err = lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
 			return errors.New("top-up order not found")
 		}
 
 		if topUp.PaymentProvider != PaymentProviderCreem {
 			return ErrPaymentMethodMismatch
+		}
+		if !topUp.ContractSnapshot {
+			return errors.New("legacy Creem topup requires manual reconciliation")
+		}
+		if topUp.ExpectedProviderProductId == "" || input.ProductId != topUp.ExpectedProviderProductId {
+			return errors.New("Creem topup product mismatch")
+		}
+		if topUp.ExpectedAmountMinor <= 0 || input.Amount != topUp.ExpectedAmountMinor {
+			return errors.New("Creem topup amount mismatch")
+		}
+		if topUp.ExpectedCurrency == "" || !strings.EqualFold(input.Currency, topUp.ExpectedCurrency) {
+			return errors.New("Creem topup currency mismatch")
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
@@ -580,12 +601,20 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		if err := creditTopUpQuota(tx, topUp.UserId, quota, updateFields); err != nil {
+			return err
+		}
+
+		return finishCreemEventTx(tx, event)
 	})
 
 	if err != nil {
 		common.SysError(common.LogText("creem topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
+	}
+	if quota <= 0 {
+		// The webhook event was already processed; nothing was credited this time.
+		return nil
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("creem topup"))
 

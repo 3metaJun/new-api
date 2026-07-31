@@ -6327,6 +6327,7 @@
     "Subscription purchased successfully": "Подписка успешно приобретена",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "Подписка оформлена с баланса, тариф: {{plan}}, сумма оплаты: {{amount}}, списано квоты: {{quota}}",
     "Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "Подписка оформлена, тариф: {{plan}}, сумма оплаты: {{amount}}, способ оплаты: {{method}}",
+    "Subscription renewed, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "Подписка продлена, тариф: {{plan}}, сумма оплаты: {{amount}}, способ оплаты: {{method}}",
     "Subscriptions": "Подписки",
     "Subtract": "Вычесть",
     "succeeded": "успешно",

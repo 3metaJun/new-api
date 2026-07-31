@@ -6327,6 +6327,7 @@
     "Subscription purchased successfully": "Abonnement acheté avec succès",
     "Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}": "Abonnement acheté avec le solde, offre : {{plan}}, montant payé : {{amount}}, quota déduit : {{quota}}",
     "Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "Abonnement acheté, offre : {{plan}}, montant payé : {{amount}}, moyen de paiement : {{method}}",
+    "Subscription renewed, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}": "Abonnement renouvelé, offre : {{plan}}, montant payé : {{amount}}, moyen de paiement : {{method}}",
     "Subscriptions": "Abonnements",
     "Subtract": "Soustraire",
     "succeeded": "réussi",
