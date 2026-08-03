@@ -371,7 +371,7 @@ func migrateDB() error {
 		&CreemWebhookEvent{},
 		&CreemSubscriptionLink{},
 		&CreemSubscriptionPayment{},
-		&CreemSubscriptionCheckoutReservation{},
+		&SubscriptionCheckoutReservation{},
 		&CreemFinancialNotice{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},

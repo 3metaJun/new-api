@@ -119,8 +119,9 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		DowngradeGroup:      plan.DowngradeGroup,
 	}
 	if err := model.ReserveCreemSubscriptionCheckout(userId, order); err != nil {
-		if errors.Is(err, model.ErrCreemCheckoutAlreadyPending) {
-			common.ApiErrorMsg(c, "A Creem subscription checkout is already pending")
+		var message *common.Message
+		if errors.As(err, &message) {
+			paymentError(c, message)
 			return
 		}
 		paymentError(c, common.NewMessage("Failed to create order"))
