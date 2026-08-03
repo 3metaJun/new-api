@@ -60,7 +60,7 @@ func TestMain(m *testing.M) {
 		&CreemWebhookEvent{},
 		&CreemSubscriptionLink{},
 		&CreemSubscriptionPayment{},
-		&CreemSubscriptionCheckoutReservation{},
+		&SubscriptionCheckoutReservation{},
 		&CreemFinancialNotice{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
@@ -103,7 +103,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM creem_webhook_events")
 		DB.Exec("DELETE FROM creem_subscription_links")
 		DB.Exec("DELETE FROM creem_subscription_payments")
-		DB.Exec("DELETE FROM creem_subscription_checkout_reservations")
+		DB.Exec("DELETE FROM subscription_checkout_reservations")
 		DB.Exec("DELETE FROM creem_financial_notices")
 		DB.Exec("DELETE FROM perf_metrics")
 		DB.Exec("DELETE FROM system_instances")
