@@ -63,6 +63,10 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "Creem recurring plans must use quota_reset_period=never and max_purchase_per_user=0")
 		return
 	}
+	if err := model.CheckActiveSubscriptionLimit(userId, plan); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	user, err := model.GetUserById(userId, false)
 	if err != nil {
 		common.ApiError(c, err)
@@ -108,6 +112,8 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		Currency:            plan.Currency,
 		PlanTitle:           plan.Title,
 		AmountTotal:         plan.TotalAmount,
+		WeeklyAmount:        plan.WeeklyAmount,
+		MaxActivePerUser:    plan.MaxActivePerUser,
 		AllowWalletOverflow: allowWalletOverflow,
 		UpgradeGroup:        plan.UpgradeGroup,
 		DowngradeGroup:      plan.DowngradeGroup,
