@@ -521,7 +521,7 @@ func TestBackgroundCreemOptionPublicationLoadsQuartetAndRetainsMissingLegacyValu
 	setting.CreemWebhookSecret = "legacy_secret"
 	common.OptionMapRWMutex.Unlock()
 	require.NoError(t, DB.Create(&[]Option{{Key: "CreemApiKey", Value: "db_key"}, {Key: "CreemProducts", Value: `[{"productId":"db_product"}]`}, {Key: "CreemTestMode", Value: "true"}}).Error)
-	loadOptionsFromDatabase()
+	require.NoError(t, LoadOptionsFromDatabase())
 	config := map[string]string{}
 	common.OptionMapRWMutex.RLock()
 	for _, key := range []string{"CreemApiKey", "CreemWebhookSecret", "CreemProducts", "CreemTestMode"} {
