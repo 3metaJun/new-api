@@ -249,8 +249,13 @@ func loadOptionsFromDatabase() {
 func SyncOptions(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
-		common.SysLog(common.LogText("syncing options from database"))
-		loadOptionsFromDatabase()
+		if !RunMetaproxyProvisionSyncIfReady(func() {
+			common.SysLog(common.LogText("syncing options from database"))
+			loadOptionsFromDatabase()
+		}) {
+			common.SysLog("skipping option sync while a metaproxy provision restart is pending")
+			continue
+		}
 	}
 }
 

@@ -108,6 +108,9 @@ var accessTokenStaticResources = []AccessTokenResource{
 		accessTokenView("View installed task plugins and their settings."),
 		accessTokenEdit("Install, configure, test, and remove task plugins."),
 	}},
+	{Resource: "metaproxy", LabelKey: "Metaproxy provisioning", group: AccessTokenGroupSystem, minRole: common.RoleRootUser, Actions: []authz.ActionDefinition{
+		accessTokenEdit("Apply metaproxy releases that replace managed channels, keys, and pricing."),
+	}},
 	{Resource: "ops", LabelKey: "Operations", group: AccessTokenGroupSystem, minRole: common.RoleRootUser, Actions: []authz.ActionDefinition{
 		accessTokenView("View performance, system tasks, and system information."),
 		accessTokenEdit("Run and manage maintenance tasks and performance settings."),

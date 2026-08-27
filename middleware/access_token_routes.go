@@ -57,6 +57,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/oauth/:provider":            accessTokenSessionRule,
 	"GET /api/verify/methods":             accessTokenAnyRule,
 	"POST /api/verify":                    accessTokenAnyRule,
+	// Fork: metaproxy releases rewrite managed channels (keys included) and
+	// pricing options in one transaction, so they get a dedicated root-only
+	// scope instead of borrowing option:write or channel scopes.
+	"POST /api/metaproxy/provision": accessTokenScopeRule("metaproxy:write"),
 
 	// router/api-router.go: /api/user (self)
 	"GET /api/user/sessions":                       accessTokenSessionRule,
