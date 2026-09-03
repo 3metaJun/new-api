@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,8 +23,24 @@ var (
 	ErrMetaproxyProvisionRequiresMemoryCache = errors.New("metaproxy provision requires MEMORY_CACHE_ENABLED=true")
 	metaproxyProvisionLock                   sync.Mutex
 	metaproxyProvisionRuntimeLock            sync.RWMutex
-	provisionRuntimeFrozen                   atomic.Bool
+
+	// reloadProvisionOptions and reloadProvisionChannels are the in-process
+	// reload steps run after a provision apply commits. They are package-level
+	// variables so tests can stub and record them. Ordering is load-bearing:
+	// options/ratios must be reloaded before the channel cache so a model is
+	// never routable before its ratio exists.
+	reloadProvisionOptions  = loadOptionsFromDatabase
+	reloadProvisionChannels = reloadProvisionChannelsAndPricing
 )
+
+// reloadProvisionChannelsAndPricing rebuilds the channel cache and then the
+// pricing catalogue, mirroring rc.43's model pricing writes, which refresh
+// pricing after commit instead of waiting for the one-minute cache expiry.
+func reloadProvisionChannelsAndPricing() {
+	InitChannelCache()
+	RefreshPricing()
+	ratio_setting.InvalidateExposedDataCache()
+}
 
 type MetaproxyProvisionChannel struct {
 	Type           int    `json:"type"`
@@ -71,23 +87,17 @@ type MetaproxyProvisionConfig struct {
 }
 
 type MetaproxyProvisionResult struct {
-	AlreadyApplied  bool
-	RestartRequired bool
-	PreviousDigest  string
+	AlreadyApplied bool
+	PreviousDigest string
 }
 
-func IsMetaproxyProvisionRuntimeFrozen() bool {
-	return provisionRuntimeFrozen.Load()
-}
-
-func RunMetaproxyProvisionSyncIfReady(syncFn func()) bool {
+// runProvisionSync runs a periodic sync under the provision runtime read lock
+// so syncs can never interleave with an in-flight provision apply reload
+// (which holds the write lock).
+func runProvisionSync(syncFn func()) {
 	metaproxyProvisionRuntimeLock.RLock()
 	defer metaproxyProvisionRuntimeLock.RUnlock()
-	if provisionRuntimeFrozen.Load() {
-		return false
-	}
 	syncFn()
-	return true
 }
 
 func activeMetaproxyProvisionDigest() string {
@@ -329,9 +339,14 @@ func ApplyMetaproxyProvision(
 		return MetaproxyProvisionResult{}, err
 	}
 
-	result.RestartRequired = activeMetaproxyProvisionDigest() != config.Digest
-	if result.RestartRequired {
-		provisionRuntimeFrozen.Store(true)
+	// The transaction committed; hot-reload the in-process state so no restart
+	// is required. Only reload when the active in-memory digest differs from
+	// the applied one, so an idempotent retry of the already-active digest is a
+	// no-op. Still holding metaproxyProvisionRuntimeLock for writing, so
+	// periodic syncs cannot interleave with the reload.
+	if activeMetaproxyProvisionDigest() != config.Digest {
+		reloadProvisionOptions()
+		reloadProvisionChannels()
 	}
 	return result, nil
 }
