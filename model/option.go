@@ -256,15 +256,12 @@ func LoadOptionsFromDatabase() error {
 func SyncOptions(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
-		if !RunMetaproxyProvisionSyncIfReady(func() {
+		runProvisionSync(func() {
 			common.SysLog(common.LogText("syncing options from database"))
 			if err := LoadOptionsFromDatabase(); err != nil {
 				common.SysError(common.LogText("failed to load options from database: %s", err.Error()))
 			}
-		}) {
-			common.SysLog("skipping option sync while a metaproxy provision restart is pending")
-			continue
-		}
+		})
 	}
 }
 
