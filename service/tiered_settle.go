@@ -27,7 +27,9 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 
 	if usage.UsageSemantic == "anthropic" {
 		cc1h = float64(usage.ClaudeCacheCreation1hTokens)
-		cc5m = float64(usage.ClaudeCacheCreation5mTokens)
+		// Relays may report only the aggregate write count. Unsplit writes use
+		// the default 5-minute tariff rather than disappearing from settlement.
+		cc5m = max(cc5m-cc1h, float64(usage.ClaudeCacheCreation5mTokens))
 	}
 
 	img := float64(usage.PromptTokensDetails.ImageTokens)
@@ -41,6 +43,15 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 	inputLen := p
 	if isClaudeUsageSemantic {
 		inputLen = p + cr + cc5m + cc1h
+		if !usedVars["cr"] {
+			p += cr
+		}
+		if !usedVars["cc"] {
+			p += cc5m
+		}
+		if !usedVars["cc1h"] {
+			p += cc1h
+		}
 	}
 
 	if !isClaudeUsageSemantic {
