@@ -538,7 +538,7 @@ func ProcessCreemRenewal(input CreemPaymentInput, providerPayload string) error 
 		if err != nil {
 			return err
 		}
-		subscription, err := createPaidUserSubscriptionFromPlanTx(tx, link.UserId, plan, CreemRecurringSource)
+		subscription, err := createPaidUserSubscriptionFromPlanTx(tx, link.UserId, plan, CreemRecurringSource, "")
 		if err != nil {
 			return err
 		}

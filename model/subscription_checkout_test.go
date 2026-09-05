@@ -62,6 +62,14 @@ func TestSettledSubscriptionOrderAlwaysDeliversReservedEntitlement(t *testing.T)
 	assert.Zero(t, reservations)
 	require.NoError(t, DB.Where("trade_no = ?", order.TradeNo).First(order).Error)
 	assert.Equal(t, common.TopUpStatusSuccess, order.Status)
+	var purchased UserSubscription
+	require.NoError(t, DB.Where("source = ? AND source_ref = ?", "order", order.TradeNo).First(&purchased).Error)
+	assert.Equal(t, order.UserId, purchased.UserId)
+	assert.Equal(t, plan.TotalAmount, purchased.AmountTotal)
+	require.NoError(t, CompleteSubscriptionOrder(order.TradeNo, "{}", PaymentProviderEpay, "nowpayments"))
+	var matching int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("source_ref = ?", order.TradeNo).Count(&matching).Error)
+	assert.EqualValues(t, 1, matching)
 }
 
 func TestExpiredCheckoutPaidAfterReplacementStillDeliversBothOrders(t *testing.T) {
