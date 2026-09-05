@@ -13,6 +13,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// CNY plans use the Epay bridge. Other checkout paths still assume USD.
+func normalizeSubscriptionCurrency(plan *model.SubscriptionPlan) error {
+	plan.Currency = strings.ToUpper(strings.TrimSpace(plan.Currency))
+	if plan.Currency == "" {
+		plan.Currency = "USD"
+	}
+	if plan.Currency == "USD" {
+		return nil
+	}
+	if plan.Currency != "CNY" {
+		return fmt.Errorf("unsupported subscription currency")
+	}
+	if plan.AllowBalancePay == nil || *plan.AllowBalancePay || plan.StripePriceId != "" || plan.CreemProductId != "" || plan.WaffoPancakeProductId != "" {
+		return fmt.Errorf("CNY subscription plans require Epay-only checkout and balance payment disabled")
+	}
+	return nil
+}
+
 // ---- Shared types ----
 
 type SubscriptionPlanDTO struct {
@@ -194,10 +212,10 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "价格不能超过9999")
 		return
 	}
-	if req.Plan.Currency == "" {
-		req.Plan.Currency = "USD"
+	if err := normalizeSubscriptionCurrency(&req.Plan); err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	req.Plan.Currency = "USD"
 	if req.Plan.AllowBalancePay == nil {
 		req.Plan.AllowBalancePay = common.GetPointer(true)
 	}
@@ -282,10 +300,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.Id = id
-	if req.Plan.Currency == "" {
-		req.Plan.Currency = "USD"
+	if err := normalizeSubscriptionCurrency(&req.Plan); err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	req.Plan.Currency = "USD"
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
