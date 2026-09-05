@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -51,4 +52,17 @@ func TestAdminOptionEditInvalidatesPricing(t *testing.T) {
 			require.Equal(t, 2.0, price.ModelRatio)
 		}
 	}
+	// Exercise the actual invalidation/read interleaving under the race detector.
+	var readers sync.WaitGroup
+	start := make(chan struct{})
+	for _, read := range []func(){func() { model.GetPricing() }, func() { model.GetVendors() }, model.InvalidatePricingCache} {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			<-start
+			read()
+		}()
+	}
+	close(start)
+	readers.Wait()
 }
