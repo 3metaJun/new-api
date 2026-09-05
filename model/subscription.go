@@ -700,8 +700,8 @@ func CreateUserSubscriptionFromPlanWithRefTx(tx *gorm.DB, userId int, plan *Subs
 // createPaidUserSubscriptionFromPlanTx is reserved for authenticated provider
 // callbacks. Checkout creation already serialized and validated the limits; a
 // settled order must always receive the entitlement it paid for.
-func createPaidUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
-	return createUserSubscriptionFromPlanWithRefTx(tx, userId, plan, source, "", false)
+func createPaidUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string, sourceRef string) (*UserSubscription, error) {
+	return createUserSubscriptionFromPlanWithRefTx(tx, userId, plan, source, sourceRef, false)
 }
 
 func createUserSubscriptionFromPlanWithRefTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string, sourceRef string, enforceLimits bool) (*UserSubscription, error) {
@@ -926,7 +926,7 @@ func CompleteSubscriptionOrderTx(tx *gorm.DB, tradeNo string, providerPayload st
 	if order.Status != common.TopUpStatusPending {
 		return nil, nil, nil, false, ErrSubscriptionOrderStatusInvalid
 	}
-	subscription, err := createPaidUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
+	subscription, err := createPaidUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order", order.TradeNo)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
