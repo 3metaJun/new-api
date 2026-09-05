@@ -65,17 +65,19 @@ var (
 )
 
 func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
-		}
-	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
 	return pricingMap
+}
+
+// Callers hold updatePricingLock across refresh and reading the published snapshot.
+func refreshPricingLocked() {
+	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
+		modelSupportEndpointsLock.Lock()
+		defer modelSupportEndpointsLock.Unlock()
+		updatePricing()
+	}
 }
 
 func InvalidatePricingCache() {
@@ -89,10 +91,9 @@ func InvalidatePricingCache() {
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
 	return vendorsList
 }
 
