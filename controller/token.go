@@ -9,9 +9,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
@@ -251,7 +253,7 @@ func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
 	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	err := c.ShouldBindBodyWith(&token, binding.JSON)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -260,7 +262,7 @@ func UpdateToken(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
 	}
-	if !token.UnlimitedQuota {
+	if !token.UnlimitedQuota || c.Request.Method == http.MethodPatch {
 		if token.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
 			return
@@ -275,6 +277,38 @@ func UpdateToken(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	var patch map[string]interface{}
+	if c.Request.Method == http.MethodPatch {
+		if err := c.ShouldBindBodyWith(&patch, binding.JSON); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		allowed := map[string]bool{"id": true, "name": true, "status": true, "expired_time": true,
+			"remain_quota": true, "unlimited_quota": true, "model_limits_enabled": true,
+			"model_limits": true, "allow_ips": true, "group": true, "cross_group_retry": true}
+		for field, value := range patch {
+			if !allowed[field] || value == nil {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
+		}
+		delete(patch, "id")
+		if len(patch) == 0 || (patch["status"] != nil && token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusDisabled) {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if patch["group"] != nil && token.Group != "" {
+			userGroup, err := model.GetUserGroup(userId, true)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if _, ok := service.GetUserUsableGroups(userGroup)[token.Group]; !ok {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
+		}
 	}
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
@@ -300,7 +334,14 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 	}
-	err = cleanToken.Update()
+	if patch != nil {
+		err = cleanToken.UpdateFields(patch)
+		if err == nil {
+			cleanToken, err = model.GetTokenByIds(token.Id, userId)
+		}
+	} else {
+		err = cleanToken.Update()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

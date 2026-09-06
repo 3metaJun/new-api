@@ -306,6 +306,20 @@ func (token *Token) Update() (err error) {
 	return err
 }
 
+// UpdateFields preserves quota consumed concurrently when the caller only edits metadata.
+func (token *Token) UpdateFields(fields map[string]interface{}) error {
+	if err := DB.Model(&Token{}).Where("id = ? AND user_id = ?", token.Id, token.UserId).Updates(fields).Error; err != nil {
+		return err
+	}
+	if common.RedisEnabled {
+		if err := cacheDeleteToken(token.Key); err != nil {
+			common.SysLog("failed to invalidate token cache: " + err.Error())
+			return err
+		}
+	}
+	return nil
+}
+
 func (token *Token) SelectUpdate() (err error) {
 	defer func() {
 		if shouldUpdateRedis(true, err) {
