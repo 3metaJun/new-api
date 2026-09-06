@@ -316,6 +316,15 @@ func (token *Token) Update() (err error) {
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
 }
 
+// UpdateColumns writes only the named columns so a partial edit cannot
+// overwrite quota consumed concurrently by relay requests.
+func (token *Token) UpdateColumns(columns []string) error {
+	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
+		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
+	}
+	return DB.Model(token).Select(columns).Updates(token).Error
+}
+
 func (token *Token) SelectUpdate() (err error) {
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before status update: %s", cacheErr.Error()))

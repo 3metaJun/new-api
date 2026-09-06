@@ -229,6 +229,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/token/:id/key":    accessTokenScopeRule("api_key:reveal"),
 	"POST /api/token/":           accessTokenScopeRule("api_key:write"),
 	"PUT /api/token/":            accessTokenScopeRule("api_key:write"),
+	"PATCH /api/token/":          accessTokenScopeRule("api_key:write"),
 	"DELETE /api/token/:id":      accessTokenScopeRule("api_key:write"),
 	"POST /api/token/batch":      accessTokenScopeRule("api_key:write"),
 	"POST /api/token/batch/keys": accessTokenScopeRule("api_key:reveal"),
