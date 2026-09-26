@@ -396,6 +396,7 @@
   "data handler goroutine panic: %v": "数据处理 goroutine 发生 panic: %v",
   "database migration started": "开始数据库迁移",
   "do request failed: %s": "请求上游失败: %s",
+  "stream first response timeout: %s": "流式首包超时: %s",
   "downloading file from worker: %s, reason: %s": "通过 Worker 下载文件: %s，原因: %s",
   "downloading from origin: %s, reason: %s": "直接从源地址下载: %s，原因: %s",
   "encode task plugin native submit view failed: %s": "任务插件提交响应: 序列化任务数据失败: %s",
