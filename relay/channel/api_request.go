@@ -1,6 +1,8 @@
 package channel
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
@@ -506,13 +509,36 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	var firstResponseDeadline *streamFirstResponseDeadline
+	if info.IsStream {
+		if timeout := operation_setting.StreamFirstResponseTimeout(info.OriginModelName); timeout > 0 {
+			req, firstResponseDeadline = startStreamFirstResponseDeadline(req, timeout)
+		}
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
+		if firstResponseDeadline != nil {
+			firstResponseDeadline.release()
+			if firstResponseDeadline.expired.Load() {
+				logger.LogWarn(c, firstResponseDeadline.err().Error())
+				return nil, types.NewError(firstResponseDeadline.err(), types.ErrorCodeDoRequestFailed)
+			}
+		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
+		if firstResponseDeadline != nil {
+			firstResponseDeadline.release()
+		}
 		return nil, errors.New("resp is nil")
+	}
+	if firstResponseDeadline != nil {
+		if err := firstResponseDeadline.awaitData(resp); err != nil {
+			logger.LogWarn(c, err.Error())
+			return nil, types.NewError(err, types.ErrorCodeDoRequestFailed)
+		}
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
@@ -522,6 +548,87 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
+}
+
+// streamFirstResponseDeadline aborts an upstream stream that has not produced its
+// first SSE data line in time. The wait happens inside doRequest, before any relay
+// handler writes to the client, so the caller's retry loop can still switch
+// channels. An upstream that stalls with zero bytes otherwise holds the client
+// until STREAMING_TIMEOUT, and that path never retries.
+type streamFirstResponseDeadline struct {
+	timeout time.Duration
+	timer   *time.Timer
+	cancel  context.CancelFunc
+	expired atomic.Bool
+}
+
+func startStreamFirstResponseDeadline(req *http.Request, timeout time.Duration) (*http.Request, *streamFirstResponseDeadline) {
+	ctx, cancel := context.WithCancel(req.Context())
+	deadline := &streamFirstResponseDeadline{timeout: timeout, cancel: cancel}
+	deadline.timer = time.AfterFunc(timeout, func() {
+		deadline.expired.Store(true)
+		cancel()
+	})
+	return req.WithContext(ctx), deadline
+}
+
+func (d *streamFirstResponseDeadline) err() error {
+	return fmt.Errorf("upstream sent no stream data within %s", d.timeout)
+}
+
+func (d *streamFirstResponseDeadline) release() {
+	d.timer.Stop()
+	d.cancel()
+}
+
+// awaitData blocks until the first SSE data line arrives, the body ends, or the
+// deadline fires. Bytes read while waiting are replayed in front of the body, and
+// the request context stays alive until the body is closed. Comment and event
+// lines do not count: a relay that sends keep-alives while its own upstream is
+// stuck is still stuck.
+func (d *streamFirstResponseDeadline) awaitData(resp *http.Response) error {
+	reader := bufio.NewReader(resp.Body)
+	var consumed bytes.Buffer
+	if resp.StatusCode == http.StatusOK {
+		atLineStart := true
+		for {
+			chunk, readErr := reader.ReadSlice('\n')
+			consumed.Write(chunk)
+			if atLineStart && bytes.HasPrefix(chunk, []byte("data:")) {
+				break
+			}
+			if errors.Is(readErr, bufio.ErrBufferFull) {
+				atLineStart = false
+				continue
+			}
+			if readErr != nil {
+				break
+			}
+			atLineStart = true
+		}
+	}
+	if !d.timer.Stop() && d.expired.Load() {
+		_ = resp.Body.Close()
+		return d.err()
+	}
+	resp.Body = &cancelOnCloseBody{
+		Reader: io.MultiReader(bytes.NewReader(consumed.Bytes()), reader),
+		body:   resp.Body,
+		cancel: d.cancel,
+	}
+	return nil
+}
+
+type cancelOnCloseBody struct {
+	io.Reader
+	body   io.Closer
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.body.Close()
+	b.cancel()
+	return err
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
