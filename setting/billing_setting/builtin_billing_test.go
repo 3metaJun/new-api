@@ -109,3 +109,47 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 		})
 	}
 }
+
+func TestFlashTierBuiltinBilling(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+
+	for _, tc := range []struct {
+		name, model                    string
+		input, output, cached, written int
+		quota                          int
+	}{
+		// 1M tokens bill at the listed USD price; QuotaPerUnit 500000 halves the per-million sum.
+		{"gpt-6-luna list price", "gpt-6-luna", 1000000, 1000000, 0, 0, 300000},
+		{"gpt-6-luna cache read and write", "gpt-6-luna", 1000000, 0, 600000, 200000, 25500},
+		{"gemini-3.8-flash list price", "gemini-3.8-flash", 1000000, 1000000, 0, 0, 2250000},
+		{"gemini-3.8-flash cache read", "gemini-3.8-flash", 1000000, 0, 800000, 0, 105000},
+		{"claude-haiku-5-5 at the 100K boundary", "claude-haiku-5-5", 100000, 10000, 0, 0, 7500},
+		{"claude-haiku-5-5 above 100K bills the whole request at 5x", "claude-haiku-5-5", 100001, 10000, 0, 0, 37500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode(tc.model))
+			expression, ok := billing_setting.GetBillingExpr(tc.model)
+			require.True(t, ok)
+			usage := &dto.Usage{
+				PromptTokens: tc.input, CompletionTokens: tc.output,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: tc.cached, CacheWriteTokens: tc.written},
+			}
+			params := service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
+			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+			}, params, billingexpr.RequestInput{Body: []byte(`{}`)})
+			require.NoError(t, err)
+			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)
+		})
+	}
+}
