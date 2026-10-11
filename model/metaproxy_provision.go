@@ -220,6 +220,13 @@ func provisionChannel(wanted MetaproxyProvisionChannel) Channel {
 	}
 }
 
+func ensureProvisionDigestOption(db *gorm.DB) error {
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoNothing: true,
+	}).Create(&Option{Key: MetaproxyProvisionDigestOption, Value: ""}).Error
+}
+
 func saveProvisionOption(tx *gorm.DB, option Option) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
@@ -308,6 +315,15 @@ func ApplyMetaproxyProvision(
 	defer metaproxyProvisionLock.Unlock()
 	metaproxyProvisionRuntimeLock.Lock()
 	defer metaproxyProvisionRuntimeLock.Unlock()
+
+	// The process-local locks above cannot serialize separate instances. The
+	// digest option row is the cross-instance lock: make sure it exists (an
+	// empty value reads as MetaproxyProvisionNoDigest) before the transaction
+	// locks it, so a fresh database cannot let two instances both see "no row"
+	// and create managed channels concurrently.
+	if err := ensureProvisionDigestOption(DB); err != nil {
+		return MetaproxyProvisionResult{}, err
+	}
 
 	result := MetaproxyProvisionResult{}
 	err := DB.Transaction(func(tx *gorm.DB) error {

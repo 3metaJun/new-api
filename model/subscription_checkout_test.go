@@ -72,7 +72,7 @@ func TestSettledSubscriptionOrderAlwaysDeliversReservedEntitlement(t *testing.T)
 	assert.EqualValues(t, 1, matching)
 }
 
-func TestExpiredCheckoutPaidAfterReplacementStillDeliversBothOrders(t *testing.T) {
+func TestExpiredCheckoutPaidAfterReplacementIsHeldForReview(t *testing.T) {
 	truncateTables(t)
 	plan := seedCheckoutPlan(t, 9303, 7303)
 	oldOrder := &SubscriptionOrder{UserId: 9303, PlanId: plan.Id, Money: plan.PriceAmount, TradeNo: "sub_old_checkout", PaymentMethod: "nowpayments", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}
@@ -84,16 +84,38 @@ func TestExpiredCheckoutPaidAfterReplacementStillDeliversBothOrders(t *testing.T
 	require.NoError(t, DB.Where("trade_no = ?", oldOrder.TradeNo).First(oldOrder).Error)
 	assert.Equal(t, common.TopUpStatusExpired, oldOrder.Status)
 
-	require.NoError(t, CompleteSubscriptionOrder(oldOrder.TradeNo, "{}", PaymentProviderEpay, "nowpayments"))
+	// The lapsed order is paid while the replacement still holds the only slot.
+	require.NoError(t, CompleteSubscriptionOrder(oldOrder.TradeNo, `{"paid":"old"}`, PaymentProviderEpay, "nowpayments"))
 	var liveReservation SubscriptionCheckoutReservation
 	require.NoError(t, DB.Where("trade_no = ?", newOrder.TradeNo).First(&liveReservation).Error)
 	require.NoError(t, CompleteSubscriptionOrder(newOrder.TradeNo, "{}", PaymentProviderStripe, PaymentMethodStripe))
+	// A provider retry of the held order stays held and grants nothing.
+	require.NoError(t, CompleteSubscriptionOrder(oldOrder.TradeNo, `{"paid":"old"}`, PaymentProviderEpay, "nowpayments"))
 
 	var subscriptions int64
 	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ?", 9303).Count(&subscriptions).Error)
-	assert.EqualValues(t, 2, subscriptions)
-	for _, order := range []*SubscriptionOrder{oldOrder, newOrder} {
-		require.NoError(t, DB.Where("trade_no = ?", order.TradeNo).First(order).Error)
-		assert.Equal(t, common.TopUpStatusSuccess, order.Status)
-	}
+	assert.EqualValues(t, 1, subscriptions)
+	require.NoError(t, DB.Where("trade_no = ?", oldOrder.TradeNo).First(oldOrder).Error)
+	assert.Equal(t, SubscriptionOrderStatusPendingManualReview, oldOrder.Status)
+	assert.Equal(t, `{"paid":"old"}`, oldOrder.ProviderPayload)
+	require.NoError(t, DB.Where("trade_no = ?", newOrder.TradeNo).First(newOrder).Error)
+	assert.Equal(t, common.TopUpStatusSuccess, newOrder.Status)
+}
+
+func TestExpiredCheckoutPaidOverActiveLimitIsHeldForReview(t *testing.T) {
+	truncateTables(t)
+	plan := seedCheckoutPlan(t, 9304, 7304)
+	order := &SubscriptionOrder{UserId: 9304, PlanId: plan.Id, Money: plan.PriceAmount, TradeNo: "sub_lapsed_over_limit", PaymentMethod: "nowpayments", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}
+	require.NoError(t, ReserveSubscriptionCheckout(9304, order))
+	require.NoError(t, ReleaseSubscriptionCheckout(order.TradeNo, PaymentProviderEpay))
+	now := GetDBTimestamp()
+	require.NoError(t, DB.Create(&UserSubscription{UserId: 9304, PlanId: plan.Id, AmountTotal: plan.TotalAmount, StartTime: now - 60, EndTime: now + 3600, Status: "active"}).Error)
+
+	require.NoError(t, CompleteSubscriptionOrder(order.TradeNo, "{}", PaymentProviderEpay, "nowpayments"))
+
+	var subscriptions int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ?", 9304).Count(&subscriptions).Error)
+	assert.EqualValues(t, 1, subscriptions)
+	require.NoError(t, DB.Where("trade_no = ?", order.TradeNo).First(order).Error)
+	assert.Equal(t, SubscriptionOrderStatusPendingManualReview, order.Status)
 }

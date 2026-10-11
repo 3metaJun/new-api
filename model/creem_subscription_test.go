@@ -299,6 +299,41 @@ func TestCreemLatePaymentSettlesExpiredReservedOrder(t *testing.T) {
 	assert.EqualValues(t, 1, links)
 }
 
+func TestCreemLatePaymentOverActiveLimitIsRecordedUnresolved(t *testing.T) {
+	truncateTables(t)
+	seedCreemRecurringOrder(t, "sub_late_over_limit")
+	require.NoError(t, DB.Model(&SubscriptionOrder{}).Where("trade_no = ?", "sub_late_over_limit").Update("status", common.TopUpStatusExpired).Error)
+	now := GetDBTimestamp()
+	require.NoError(t, DB.Create(&UserSubscription{UserId: 7001, PlanId: 7101, AmountTotal: 9000, StartTime: now - 60, EndTime: now + 3600, Status: "active"}).Error)
+
+	input := CreemPaymentInput{EventId: "evt_over_limit", EventType: "subscription.paid", PayloadHash: "over-limit", TradeNo: "sub_late_over_limit", SubscriptionId: "sub_over_limit", TransactionId: "txn_over_limit", ProductId: "prod_recurring", ProviderStatus: "active", Amount: 1200, Currency: "USD", PeriodStart: 1893456000, PeriodEnd: 1896134400, EventCreatedAt: 1000}
+	require.NoError(t, ProcessCreemInitialPayment(input, `{}`))
+	// The next renewal of the unlinked provider subscription falls back to the
+	// initial-payment path and must also be recorded without granting quota.
+	renewal := input
+	renewal.EventId, renewal.PayloadHash, renewal.TransactionId, renewal.EventCreatedAt = "evt_over_limit_renewal", "over-limit-renewal", "txn_over_limit_renewal", 2000
+	renewal.PeriodStart, renewal.PeriodEnd = input.PeriodEnd, input.PeriodEnd+2678400
+	require.ErrorIs(t, ProcessCreemRenewal(renewal, `{}`), ErrCreemSubscriptionLinkNotFound)
+	require.NoError(t, ProcessCreemInitialPayment(renewal, `{}`))
+
+	var order SubscriptionOrder
+	require.NoError(t, DB.Where("trade_no = ?", input.TradeNo).First(&order).Error)
+	assert.Equal(t, SubscriptionOrderStatusPendingManualReview, order.Status)
+	var entitlements, links int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ?", 7001).Count(&entitlements).Error)
+	require.NoError(t, DB.Model(&CreemSubscriptionLink{}).Count(&links).Error)
+	assert.EqualValues(t, 1, entitlements)
+	assert.Zero(t, links)
+	var payments []CreemSubscriptionPayment
+	require.NoError(t, DB.Order("id asc").Find(&payments).Error)
+	require.Len(t, payments, 2)
+	for _, payment := range payments {
+		assert.Equal(t, CreemReconciliationUnresolved, payment.ReconciliationStatus)
+		assert.Zero(t, payment.UserSubscriptionId)
+		assert.Equal(t, 7001, payment.UserId)
+	}
+}
+
 func TestCreemExistingPaymentDoesNotDeleteDifferentLiveReservation(t *testing.T) {
 	truncateTables(t)
 	seedCreemRecurringOrder(t, "sub_existing_first")
