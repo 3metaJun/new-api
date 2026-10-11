@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -372,4 +373,65 @@ func TestOpenAIChatRequestToClaudeMessages_ClaudeOpus48ThinkingUsesAdaptiveHighE
 	require.Nil(t, claudeRequest.Temperature)
 	require.Nil(t, claudeRequest.TopP)
 	require.Nil(t, claudeRequest.TopK)
+}
+
+func TestOpenAIChatRequestToClaudeMessages_ClaudeHaiku55RendersAdaptiveThinking(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		reasoningEffort string
+		reasoning       string
+		thinkingType    string
+		outputConfig    string
+	}{
+		{"openrouter effort", "", `{"effort":"medium"}`, "adaptive", `{"effort":"medium"}`},
+		{"openai reasoning_effort", "low", "", "adaptive", `{"effort":"low"}`},
+		{"minimal maps to low", "", `{"effort":"minimal"}`, "adaptive", `{"effort":"low"}`},
+		{"explicitly disabled", "", `{"enabled":false}`, "disabled", ""},
+		{"budget only", "", `{"max_tokens":2048}`, "adaptive", `{"effort":"high"}`},
+		{"no reasoning keeps the model default", "", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := dto.GeneralOpenAIRequest{
+				Model:           "claude-haiku-5-5",
+				Temperature:     commonPointer(0.7),
+				TopP:            commonPointer(0.9),
+				ReasoningEffort: tc.reasoningEffort,
+				Messages:        []dto.Message{{Role: "user", Content: "hello"}},
+			}
+			if tc.reasoning != "" {
+				request.Reasoning = json.RawMessage(tc.reasoning)
+			}
+
+			claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+			require.NoError(t, err)
+			require.Equal(t, "claude-haiku-5-5", claudeRequest.Model)
+			require.Nil(t, claudeRequest.Temperature)
+			require.Nil(t, claudeRequest.TopP)
+			if tc.thinkingType == "" {
+				require.Nil(t, claudeRequest.Thinking)
+			} else {
+				require.NotNil(t, claudeRequest.Thinking)
+				require.Equal(t, tc.thinkingType, claudeRequest.Thinking.Type)
+				require.Nil(t, claudeRequest.Thinking.BudgetTokens)
+			}
+			if tc.outputConfig == "" {
+				require.Empty(t, claudeRequest.OutputConfig)
+			} else {
+				require.JSONEq(t, tc.outputConfig, string(claudeRequest.OutputConfig))
+			}
+		})
+	}
+}
+
+func TestOpenAIChatRequestToClaudeMessages_ClaudeHaiku55EffortSuffix(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model:    "claude-haiku-5-5-high",
+		Messages: []dto.Message{{Role: "user", Content: "hello"}},
+	}
+
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	require.NoError(t, err)
+	require.Equal(t, "claude-haiku-5-5", claudeRequest.Model)
+	require.Equal(t, "adaptive", claudeRequest.Thinking.Type)
+	require.JSONEq(t, `{"effort":"high"}`, string(claudeRequest.OutputConfig))
 }
