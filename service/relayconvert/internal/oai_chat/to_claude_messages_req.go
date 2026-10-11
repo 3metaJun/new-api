@@ -128,16 +128,13 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 	}
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
-			strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
-			strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
+		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") || reasoning.ClaudeAdaptiveOnly(textRequest.Model)) {
 		claudeRequest.Model = baseModel
 		claudeRequest.Thinking = &dto.Thinking{
 			Type: "adaptive",
 		}
 		claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
-			strings.HasPrefix(baseModel, "claude-opus-4-8") {
+		if reasoning.ClaudeAdaptiveOnly(baseModel) {
 			claudeRequest.Thinking.Display = "summarized"
 			claudeRequest.Temperature = nil
 			claudeRequest.TopP = nil
@@ -150,8 +147,7 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 		strings.HasSuffix(textRequest.Model, "-thinking") {
 
 		trimmedModel := strings.TrimSuffix(textRequest.Model, "-thinking")
-		if strings.HasPrefix(trimmedModel, "claude-opus-4-7") ||
-			strings.HasPrefix(trimmedModel, "claude-opus-4-8") {
+		if reasoning.ClaudeAdaptiveOnly(trimmedModel) {
 			claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
 			claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
 			claudeRequest.Temperature = nil
@@ -206,6 +202,12 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 				Type:         "enabled",
 				BudgetTokens: &budgetTokens,
 			}
+		}
+	}
+
+	if reasoning.ClaudeAdaptiveOnly(claudeRequest.Model) {
+		if err := applyClaudeAdaptiveThinking(&claudeRequest, textRequest); err != nil {
+			return nil, err
 		}
 	}
 
@@ -398,4 +400,60 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	return &claudeRequest, nil
+}
+
+// applyClaudeAdaptiveThinking renders an OpenAI-style reasoning request for a
+// Claude model that only accepts adaptive thinking. The budget-based branches
+// above would otherwise send thinking.type="enabled", which these models
+// reject with 400. An effort suffix already rendered adaptive thinking and wins.
+func applyClaudeAdaptiveThinking(claudeRequest *dto.ClaudeRequest, textRequest dto.GeneralOpenAIRequest) error {
+	claudeRequest.Temperature = nil
+	claudeRequest.TopP = nil
+	claudeRequest.TopK = nil
+	if claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "adaptive" {
+		return nil
+	}
+
+	effort := textRequest.ReasoningEffort
+	disabled := false
+	if textRequest.Reasoning != nil {
+		var config struct {
+			Enabled   *bool  `json:"enabled"`
+			Effort    string `json:"effort"`
+			MaxTokens int    `json:"max_tokens"`
+		}
+		if err := common.Unmarshal(textRequest.Reasoning, &config); err != nil {
+			return err
+		}
+		if config.Effort != "" {
+			effort = config.Effort
+		} else if config.Enabled != nil && !*config.Enabled {
+			disabled = true
+		} else if effort == "" && (config.MaxTokens > 0 || config.Enabled != nil) {
+			effort = "high"
+		}
+	}
+	if effort == "" && claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled" {
+		effort = "high"
+	}
+
+	switch effort {
+	case "":
+		if disabled {
+			claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+		}
+		return nil
+	case "none":
+		claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+		claudeRequest.OutputConfig = nil
+		return nil
+	case "minimal":
+		effort = "low"
+	case "low", "medium", "high", "xhigh", "max":
+	default:
+		return fmt.Errorf("unsupported reasoning effort %q for %s", effort, claudeRequest.Model)
+	}
+	claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
+	claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effort))
+	return nil
 }
