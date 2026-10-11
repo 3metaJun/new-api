@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/shopspring/decimal"
 )
 
@@ -381,12 +384,22 @@ func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
 	request := tokenRequest{}
-	err := c.ShouldBindJSON(&request)
+	// PATCH reads the body twice (struct + present keys), so bind from a cached copy.
+	err := c.ShouldBindBodyWith(&request, binding.JSON)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	token := request.Token
+	var patchColumns []string
+	if c.Request.Method == http.MethodPatch {
+		patchColumns = tokenPatchColumns(c)
+		if patchColumns == nil {
+			return
+		}
+		statusOnly = ""
+	}
+	isPatch := patchColumns != nil
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id
@@ -395,7 +408,7 @@ func UpdateToken(c *gin.Context) {
 		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
-	if !token.UnlimitedQuota {
+	if !token.UnlimitedQuota || isPatch {
 		if token.RemainQuota < 0 {
 			common.ApiErrorT(c, "Quota value cannot be negative")
 			return
@@ -413,6 +426,11 @@ func UpdateToken(c *gin.Context) {
 	}
 	params["name"] = cleanToken.Name
 	previous := *cleanToken
+	if isPatch && slices.Contains(patchColumns, "status") &&
+		token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusDisabled {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
 			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
@@ -423,7 +441,13 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
-	if statusOnly != "" {
+	if isPatch {
+		columns, ok := applyTokenPatch(c, cleanToken, &token, request.AutoGroups, patchColumns)
+		if !ok {
+			return
+		}
+		err = cleanToken.UpdateColumns(columns)
+	} else if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
 		// If you add more fields, please also update token.Update()
@@ -445,7 +469,9 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	if !isPatch {
+		err = cleanToken.Update()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -483,6 +509,103 @@ func UpdateToken(c *gin.Context) {
 		"message": "",
 		"data":    buildMaskedTokenResponse(cleanToken),
 	})
+}
+
+// tokenPatchableColumns are the token columns a PATCH may name. Quota counters
+// and keys are absent so a metadata edit cannot overwrite quota consumed
+// concurrently by relay requests.
+var tokenPatchableColumns = map[string]bool{
+	"name": true, "status": true, "expired_time": true, "remain_quota": true,
+	"unlimited_quota": true, "model_limits_enabled": true, "model_limits": true,
+	"allow_ips": true, "group": true, "cross_group_retry": true, "auto_groups": true,
+}
+
+// tokenPatchColumns returns the columns named by a PATCH body, or nil after
+// writing an error response. Unknown keys and explicit nulls are rejected.
+func tokenPatchColumns(c *gin.Context) []string {
+	raw, _ := c.Get(gin.BodyBytesKey)
+	body, ok := raw.([]byte)
+	if !ok {
+		common.ApiErrorT(c, "Invalid parameters")
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := common.Unmarshal(body, &fields); err != nil {
+		common.ApiError(c, err)
+		return nil
+	}
+	columns := make([]string, 0, len(fields))
+	for field, value := range fields {
+		if field == "id" {
+			continue
+		}
+		if !tokenPatchableColumns[field] || common.GetJsonType(value) == "null" {
+			common.ApiErrorT(c, "Invalid parameters")
+			return nil
+		}
+		columns = append(columns, field)
+	}
+	if len(columns) == 0 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return nil
+	}
+	return columns
+}
+
+// applyTokenPatch copies only the named fields onto cleanToken, applies the
+// same group rules as a full update, and returns the columns to persist.
+func applyTokenPatch(c *gin.Context, cleanToken *model.Token, token *model.Token, autoGroups tokenAutoGroupsInput, columns []string) ([]string, bool) {
+	for _, column := range columns {
+		switch column {
+		case "name":
+			cleanToken.Name = token.Name
+		case "status":
+			cleanToken.Status = token.Status
+		case "expired_time":
+			cleanToken.ExpiredTime = token.ExpiredTime
+		case "remain_quota":
+			cleanToken.RemainQuota = token.RemainQuota
+		case "unlimited_quota":
+			cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		case "model_limits_enabled":
+			cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
+		case "model_limits":
+			cleanToken.ModelLimits = token.ModelLimits
+		case "allow_ips":
+			cleanToken.AllowIps = token.AllowIps
+		case "group":
+			cleanToken.Group = token.Group
+		case "cross_group_retry":
+			cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		}
+	}
+	if slices.Contains(columns, "group") && cleanToken.Group != "" {
+		userGroup, err := getTokenRequestUserGroup(c)
+		if err != nil {
+			common.ApiError(c, err)
+			return nil, false
+		}
+		if _, ok := service.GetUserUsableGroups(userGroup)[cleanToken.Group]; !ok {
+			common.ApiErrorT(c, "Invalid parameters")
+			return nil, false
+		}
+	}
+	if !slices.Contains(columns, "group") && !slices.Contains(columns, "cross_group_retry") &&
+		!slices.Contains(columns, "auto_groups") {
+		return columns, true
+	}
+	if cleanToken.Group != "auto" {
+		cleanToken.CrossGroupRetry = false
+		_ = cleanToken.SetAutoGroups(nil)
+	} else if autoGroups.Set && !setTokenAutoGroups(c, cleanToken, autoGroups.Groups) {
+		return nil, false
+	}
+	for _, column := range []string{"cross_group_retry", "auto_groups"} {
+		if !slices.Contains(columns, column) {
+			columns = append(columns, column)
+		}
+	}
+	return columns, true
 }
 
 type TokenBatch struct {

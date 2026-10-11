@@ -77,10 +77,12 @@ func claudeCapabilitiesFor(model string) claudeCapabilities {
 		capabilities.strictSampling = true
 	case strings.HasPrefix(model, "claude-opus-5"),
 		strings.HasPrefix(model, "claude-sonnet-5"),
+		strings.HasPrefix(model, "claude-haiku-5"),
 		strings.HasPrefix(model, "claude-opus-4-8"),
 		strings.HasPrefix(model, "claude-opus-4-7"):
 		capabilities.adaptive = true
 		capabilities.supportsManual = false
+		// Haiku 5 only thinks when asked; the fork never made it think by default.
 		if strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5") {
 			capabilities.defaultThinking = true
 		}
