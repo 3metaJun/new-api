@@ -158,16 +158,12 @@ func UpdateCreemConfiguration(c *gin.Context) {
 	if productsJSON == "" {
 		productsJSON = "[]"
 	}
-	var products []CreemProduct
-	if err := common.UnmarshalJsonStr(productsJSON, &products); err != nil {
-		common.ApiErrorMsg(c, "invalid Creem product JSON")
+	// Validate with the same parser the runtime catalog and checkout use, so a
+	// saved catalog can never fail later (e.g. prices that overflow minor units).
+	products, err := parseCreemProducts(productsJSON)
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid Creem product catalog")
 		return
-	}
-	for _, product := range products {
-		if strings.TrimSpace(product.ProductId) == "" || strings.TrimSpace(product.Name) == "" || product.Price <= 0 || product.Quota <= 0 || strings.TrimSpace(product.Currency) == "" {
-			common.ApiErrorMsg(c, "invalid Creem product catalog entry")
-			return
-		}
 	}
 	canonical, err := common.Marshal(products)
 	if err != nil {

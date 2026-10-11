@@ -50,6 +50,16 @@ func TestCreemLiveConfigurationValidationDoesNotEchoSecrets(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "webhook secret")
 }
 
+func TestCreemConfigurationRejectsPriceOverflowingMinorUnits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest("PUT", "/api/option/creem/configuration", strings.NewReader(`{"api_key":"key","webhook_secret":"secret","products":[{"productId":"prod","name":"Huge","price":1e18,"currency":"USD","quota":1}],"test_mode":true}`))
+	UpdateCreemConfiguration(context)
+	assert.Contains(t, recorder.Body.String(), "invalid Creem product catalog")
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+}
+
 func TestCreemFlexibleObjectOrIDParsing(t *testing.T) {
 	for _, raw := range []string{`{"id":"evt_1","eventType":"checkout.completed","object":{"subscription":{"id":"sub_object","product":{"id":"prod_object"},"customer":"cus_string"}}}`, `{"id":"evt_2","eventType":"checkout.completed","object":{"subscription":"sub_string"}}`} {
 		var event CreemWebhookPayload

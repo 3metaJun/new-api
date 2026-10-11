@@ -370,28 +370,24 @@ func ProcessCreemInitialPayment(input CreemPaymentInput, providerPayload string)
 		if !errors.Is(paymentResult.Error, gorm.ErrRecordNotFound) {
 			return paymentResult.Error
 		}
-		var orderForSettlement SubscriptionOrder
-		if err := lockForUpdate(tx).Where("trade_no = ?", input.TradeNo).First(&orderForSettlement).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrSubscriptionOrderNotFound
-			}
-			return err
-		}
-		if orderForSettlement.Status == common.TopUpStatusExpired && orderForSettlement.PaymentProvider == PaymentProviderCreem {
-			// Provider checkout URLs remain payable after the local reservation expires,
-			// so expiry gates replacement checkout creation, not settlement. Paying two
-			// different checkout URLs can still create two links; ops refunds that accepted
-			// v1 edge case manually.
-			if err := tx.Model(&orderForSettlement).Updates(map[string]any{"status": common.TopUpStatusPending, "complete_time": 0}).Error; err != nil {
-				return err
-			}
-		}
+		// CompleteSubscriptionOrderTx restores a lapsed Creem checkout (provider URLs
+		// stay payable after the local reservation expires) and re-checks the plan
+		// limits; an order that would exceed them is held for manual review.
 		order, plan, subscription, completedNow, err := CompleteSubscriptionOrderTx(tx, input.TradeNo, providerPayload, PaymentProviderCreem, "")
 		if err != nil {
 			return err
 		}
 		if err := validateCreemPlanPayment(plan, input); err != nil {
 			return err
+		}
+		if subscription == nil && order.Status == SubscriptionOrderStatusPendingManualReview {
+			// No link is created, so later renewals of this provider subscription
+			// land here too and are recorded unresolved instead of granting quota.
+			unlinked := &CreemSubscriptionLink{UserId: order.UserId, PlanId: order.PlanId}
+			if err := createCreemPaymentTx(tx, input, unlinked, 0, CreemReconciliationUnresolved); err != nil {
+				return err
+			}
+			return finishCreemEventTx(tx, event)
 		}
 		if subscription == nil {
 			return errors.New("completed creem order has no entitlement")

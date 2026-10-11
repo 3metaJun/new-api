@@ -298,3 +298,31 @@ func TestApplyMetaproxyProvisionRollsBackEveryTableOnFailure(t *testing.T) {
 	require.Equal(t, "old-digest", common.OptionMap[MetaproxyProvisionDigestOption])
 	common.OptionMapRWMutex.RUnlock()
 }
+
+// The digest option row is the cross-instance provision lock, so it must exist
+// before the apply transaction locks it, and creating it must never clobber a
+// digest another instance already committed.
+func TestApplyMetaproxyProvisionCreatesDigestLockRowOnFreshDatabase(t *testing.T) {
+	db := setupMetaproxyProvisionTestDB(t)
+	stubProvisionReload(t, func() {}, func() {})
+
+	_, err := ApplyMetaproxyProvision(desiredProvisionConfig(), "stale-digest")
+	require.ErrorIs(t, err, ErrMetaproxyProvisionConflict)
+	var digest Option
+	require.NoError(t, db.First(&digest, "key = ?", MetaproxyProvisionDigestOption).Error)
+	require.Equal(t, "", digest.Value)
+
+	result, err := ApplyMetaproxyProvision(desiredProvisionConfig(), MetaproxyProvisionNoDigest)
+	require.NoError(t, err)
+	require.Equal(t, MetaproxyProvisionNoDigest, result.PreviousDigest)
+
+	require.NoError(t, ensureProvisionDigestOption(db))
+	require.NoError(t, db.First(&digest, "key = ?", MetaproxyProvisionDigestOption).Error)
+	require.Equal(t, desiredProvisionConfig().Digest, digest.Value)
+
+	_, err = ApplyMetaproxyProvision(MetaproxyProvisionConfig{Digest: "other"}, MetaproxyProvisionNoDigest)
+	require.ErrorIs(t, err, ErrMetaproxyProvisionConflict)
+	var managed int64
+	require.NoError(t, db.Model(&Channel{}).Where("tag = ?", MetaproxyProvisionManagedTag).Count(&managed).Error)
+	require.EqualValues(t, 1, managed)
+}
