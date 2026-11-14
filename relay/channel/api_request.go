@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
@@ -565,7 +566,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	var firstResponseDeadline *streamFirstResponseDeadline
 	if info.IsStream {
-		if timeout := operation_setting.StreamFirstResponseTimeout(info.OriginModelName); timeout > 0 {
+		// Per-model overrides name base models; `gemini-x@effort:low` must get gemini-x's deadline.
+		if timeout := operation_setting.StreamFirstResponseTimeout(hostreasoning.BaseModelName(info.OriginModelName)); timeout > 0 {
 			req, firstResponseDeadline = startStreamFirstResponseDeadline(req, timeout)
 		}
 	}
