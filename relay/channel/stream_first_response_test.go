@@ -105,3 +105,18 @@ func TestDoRequestKeepsStreamBytesAfterFirstData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, head+tail, string(body))
 }
+
+func TestDoRequestAppliesBaseModelOverrideToModifiedName(t *testing.T) {
+	setStreamFirstResponseTimeout(t, 1, map[string]int{"slow-model": 5})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		time.Sleep(1500 * time.Millisecond)
+		_, _ = io.WriteString(w, "data: {}\n\n")
+	}))
+	defer upstream.Close()
+
+	resp, err := doStreamRequest(t, upstream.URL, "slow-model@effort:low")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+}
