@@ -366,9 +366,16 @@ func ApplyMetaproxyProvision(
 		// stays stale, so release --verify fails and the periodic sync retries.
 		if err := reloadProvisionOptions(); err != nil {
 			common.SysError(common.LogText("metaproxy provision committed but options reload failed: %s", err.Error()))
-			return result, nil
+		} else {
+			reloadProvisionChannels()
 		}
-		reloadProvisionChannels()
+	}
+	if !result.AlreadyApplied {
+		// Other nodes reload on these tasks instead of waiting for the periodic
+		// sync. Bumped after the local reload, and options before channels, so
+		// no node routes a model before its ratio is loaded.
+		BumpSyncTopic(SyncTopicOptions)
+		BumpSyncTopic(SyncTopicChannels)
 	}
 	return result, nil
 }
