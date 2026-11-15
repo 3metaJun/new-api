@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -63,18 +64,6 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 
-	if plan.MaxPurchasePerUser > 0 {
-		count, err := model.CountUserSubscriptionsByPlan(userId, plan.Id)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorT(c, "Purchase limit for this plan has been reached")
-			return
-		}
-	}
-
 	// WAFFO_PANCAKE_SUB- prefix (vs. wallet's WAFFO_PANCAKE-) drives webhook
 	// dispatch in WaffoPancakeWebhook.
 	tradeNo := fmt.Sprintf("WAFFO_PANCAKE_SUB-%d-%d-%s", userId, time.Now().UnixMilli(), randstr.String(6))
@@ -89,7 +78,12 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	if err := order.Insert(); err != nil {
+	if err := model.ReserveSubscriptionCheckout(userId, order); err != nil {
+		var message *common.Message
+		if errors.As(err, &message) {
+			paymentError(c, message)
+			return
+		}
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription order user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
@@ -109,8 +103,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	})
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription checkout session user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		order.Status = common.TopUpStatusFailed
-		_ = order.Update()
+		_ = model.ReleaseSubscriptionCheckout(tradeNo, model.PaymentProviderWaffoPancake)
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}

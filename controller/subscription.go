@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,24 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// CNY plans use the Epay bridge. Other checkout paths still assume USD.
+func normalizeSubscriptionCurrency(plan *model.SubscriptionPlan) error {
+	plan.Currency = strings.ToUpper(strings.TrimSpace(plan.Currency))
+	if plan.Currency == "" {
+		plan.Currency = "USD"
+	}
+	if plan.Currency == "USD" {
+		return nil
+	}
+	if plan.Currency != "CNY" {
+		return errors.New("unsupported subscription currency")
+	}
+	if plan.AllowBalancePay == nil || *plan.AllowBalancePay || plan.StripePriceId != "" || plan.CreemProductId != "" || plan.WaffoPancakeProductId != "" {
+		return errors.New("CNY subscription plans require Epay-only checkout and balance payment disabled")
+	}
+	return nil
+}
 
 // ---- Shared types ----
 
@@ -24,6 +43,34 @@ type BillingPreferenceRequest struct {
 
 type SubscriptionBalancePayRequest struct {
 	PlanId int `json:"plan_id"`
+}
+
+type CreemSubscriptionPaymentDTO struct {
+	Id                 int    `json:"id"`
+	PlanId             int    `json:"plan_id"`
+	UserSubscriptionId int    `json:"user_subscription_id"`
+	Amount             int64  `json:"amount"`
+	Currency           string `json:"currency"`
+	PeriodStart        int64  `json:"period_start"`
+	PeriodEnd          int64  `json:"period_end"`
+	CreatedAt          int64  `json:"created_at"`
+}
+
+func mapCreemSubscriptionPayments(payments []model.CreemSubscriptionPayment) []CreemSubscriptionPaymentDTO {
+	result := make([]CreemSubscriptionPaymentDTO, 0, len(payments))
+	for _, payment := range payments {
+		result = append(result, CreemSubscriptionPaymentDTO{
+			Id:                 payment.Id,
+			PlanId:             payment.PlanId,
+			UserSubscriptionId: payment.UserSubscriptionId,
+			Amount:             payment.Amount,
+			Currency:           payment.Currency,
+			PeriodStart:        payment.PeriodStart,
+			PeriodEnd:          payment.PeriodEnd,
+			CreatedAt:          payment.CreatedAt,
+		})
+	}
+	return result
 }
 
 // ---- User APIs ----
@@ -65,11 +112,16 @@ func GetSubscriptionSelf(c *gin.Context) {
 	if err != nil {
 		activeSubscriptions = []model.SubscriptionSummary{}
 	}
+	creemPayments, err := model.GetCreemSubscriptionPaymentsByUser(userId)
+	if err != nil {
+		creemPayments = []model.CreemSubscriptionPayment{}
+	}
 
 	common.ApiSuccess(c, gin.H{
 		"billing_preference": pref,
 		"subscriptions":      activeSubscriptions, // all active subscriptions
 		"all_subscriptions":  allSubscriptions,    // all subscriptions including expired
+		"creem_payments":     mapCreemSubscriptionPayments(creemPayments),
 	})
 }
 
@@ -160,10 +212,10 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorT(c, "Price cannot exceed 9999")
 		return
 	}
-	if req.Plan.Currency == "" {
-		req.Plan.Currency = "USD"
+	if err := normalizeSubscriptionCurrency(&req.Plan); err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	req.Plan.Currency = "USD"
 	if req.Plan.AllowBalancePay == nil {
 		req.Plan.AllowBalancePay = common.GetPointer(true)
 	}
@@ -180,8 +232,16 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorT(c, "Purchase limit cannot be negative")
 		return
 	}
+	if req.Plan.MaxActivePerUser < 0 {
+		common.ApiErrorT(c, "Active subscription limit cannot be negative")
+		return
+	}
 	if req.Plan.TotalAmount < 0 {
 		common.ApiErrorT(c, "Total quota cannot be negative")
+		return
+	}
+	if req.Plan.WeeklyAmount < 0 || (req.Plan.TotalAmount > 0 && req.Plan.WeeklyAmount > req.Plan.TotalAmount) {
+		common.ApiErrorT(c, "Weekly quota must be between zero and the total quota")
 		return
 	}
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
@@ -240,10 +300,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.Id = id
-	if req.Plan.Currency == "" {
-		req.Plan.Currency = "USD"
+	if err := normalizeSubscriptionCurrency(&req.Plan); err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	req.Plan.Currency = "USD"
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
@@ -254,8 +314,16 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorT(c, "Purchase limit cannot be negative")
 		return
 	}
+	if req.Plan.MaxActivePerUser < 0 {
+		common.ApiErrorT(c, "Active subscription limit cannot be negative")
+		return
+	}
 	if req.Plan.TotalAmount < 0 {
 		common.ApiErrorT(c, "Total quota cannot be negative")
+		return
+	}
+	if req.Plan.WeeklyAmount < 0 || (req.Plan.TotalAmount > 0 && req.Plan.WeeklyAmount > req.Plan.TotalAmount) {
+		common.ApiErrorT(c, "Weekly quota must be between zero and the total quota")
 		return
 	}
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
@@ -294,7 +362,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 			"creem_product_id":           req.Plan.CreemProductId,
 			"waffo_pancake_product_id":   req.Plan.WaffoPancakeProductId,
 			"max_purchase_per_user":      req.Plan.MaxPurchasePerUser,
+			"max_active_per_user":        req.Plan.MaxActivePerUser,
 			"total_amount":               req.Plan.TotalAmount,
+			"weekly_amount":              req.Plan.WeeklyAmount,
 			"upgrade_group":              req.Plan.UpgradeGroup,
 			"downgrade_group":            req.Plan.DowngradeGroup,
 			"quota_reset_period":         req.Plan.QuotaResetPeriod,

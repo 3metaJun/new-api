@@ -29,6 +29,7 @@ type PricingPluginVariant struct {
 type Pricing struct {
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
+	PriceConfigured        bool                                 `json:"price_configured"`
 	Description            string                               `json:"description,omitempty"`
 	Icon                   string                               `json:"icon,omitempty"`
 	Tags                   string                               `json:"tags,omitempty"`
@@ -82,17 +83,19 @@ var (
 )
 
 func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
-		}
-	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
 	return pricingMap
+}
+
+// Callers hold updatePricingLock across refresh and reading the published snapshot.
+func refreshPricingLocked() {
+	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
+		modelSupportEndpointsLock.Lock()
+		defer modelSupportEndpointsLock.Unlock()
+		updatePricing()
+	}
 }
 
 func InvalidatePricingCache() {
@@ -106,10 +109,9 @@ func InvalidatePricingCache() {
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
 	return vendorsList
 }
 
@@ -380,10 +382,12 @@ func updatePricing() {
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {
+			pricing.PriceConfigured = true
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+			modelRatio, configured, _ := ratio_setting.GetModelRatio(model)
+			pricing.PriceConfigured = configured
 			pricing.ModelRatio = modelRatio
 			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
 			pricing.QuotaType = 0
@@ -408,12 +412,14 @@ func updatePricing() {
 		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
 			if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
 				pricing.BillingMode = billingMode
+				pricing.PriceConfigured = true
 				pricing.BillingExpr = expr
 			}
 		} else if target, resolved := ResolveTaskModelAlias(pluginGeneration, model); resolved && target.Declared != "" {
 			if tailMode := billing_setting.GetBillingMode(target.Declared); tailMode == "tiered_expr" {
 				if expr, ok := billing_setting.GetBillingExpr(target.Declared); ok && strings.TrimSpace(expr) != "" {
 					pricing.BillingMode = tailMode
+					pricing.PriceConfigured = true
 					pricing.BillingExpr = expr
 				}
 			}

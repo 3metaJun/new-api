@@ -91,6 +91,8 @@ func GetStatus(c *gin.Context) {
 		"password_login_enabled":        common.PasswordLoginEnabled,
 		"password_register_enabled":     common.PasswordRegisterEnabled,
 		"default_use_auto_group":        setting.DefaultUseAutoGroup,
+		"metaproxy_provision_digest":    common.OptionMap[model.MetaproxyProvisionDigestOption],
+		"metaproxy_provision_revision":  common.OptionMap[model.MetaproxyProvisionRevisionOption],
 
 		"password_login_encryption_enabled": common.PasswordLoginEncryptionEnabled,
 
